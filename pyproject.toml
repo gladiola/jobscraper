@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jobscraper"
+version = "0.1.0"
+description = "Search job sites (remote, by field, by domain) and export postings to CSV/XLSX/JSON"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.32.4",
+    "beautifulsoup4>=4.12",
+    "openpyxl>=3.1",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+jobscraper = "jobscraper.cli:main"
+
+[tool.setuptools]
+packages = ["jobscraper"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
