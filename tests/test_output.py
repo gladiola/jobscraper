@@ -89,4 +89,6 @@ def test_xlsx_append(tmp_path):
     write_jobs(JOBS[:1], str(path))
     write_jobs(JOBS[1:], str(path), append=True)
     sheet = load_workbook(path).active
-    assert [sheet.cell(row=row, column=1).value for row in range(2, 4)] == [job.title for job in JOBS]
+    assert [sheet.cell(row=row, column=1).value for row in range(2, 4)] == [
+        "'" + JOBS[0].title, JOBS[1].title,
+    ]

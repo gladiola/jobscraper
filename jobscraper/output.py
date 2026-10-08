@@ -84,7 +84,7 @@ def write_jobs(jobs: Sequence[Job], path: str, fmt: Optional[str] = None, includ
     # utf-8-sig adds a byte-order mark so Excel detects UTF-8 in CSV/TSV files.
     has_output = append and path != "-" and os.path.isfile(path) and os.path.getsize(path) > 0
     encoding = "utf-8" if has_output else "utf-8-sig"
-    mode = "a" if has_output else ("a" if append and path != "-" else "w")
+    mode = "a" if append else "w"
     stream = sys.stdout if path == "-" else open(path, mode, newline="", encoding=encoding)
     try:
         writer = csv.writer(stream, delimiter="\t" if fmt == "tsv" else ",")
