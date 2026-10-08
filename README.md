@@ -272,7 +272,9 @@ Choose the file with `-o` / `--output`. The format comes from the file extension
 * Use `-f`/`--format` to force a format regardless of the file name.
 * Use `-o -` to print CSV/TSV/JSON to the screen instead of a file.
 * Add `--include-description` to include each job's full description text as an extra column.
-* Running the same command again **overwrites** the file – use a new name to keep old results.
+* Use `--append` to add results to an existing file instead of replacing it. CSV/TSV headers are kept once;
+  JSON results are added to the existing array, and XLSX rows are added to the existing `Jobs` sheet.
+  XLSX append requires matching columns.
 
 ---
 
@@ -327,6 +329,7 @@ Run `jobscraper --help` for the full list. Summary:
 | `--max-pages N` | Page limit per site (default 25) |
 | `-o, --output FILE` | Output file, `-` for screen (default `jobs.csv`) |
 | `-f, --format` | `csv`, `tsv`, `xlsx` or `json` |
+| `--append` | Append results to an existing output file |
 | `--include-description` | Add the full description column |
 | `--limit N` | Stop after N matching jobs |
 | `--delay SECONDS` | Wait between requests to the same site (default 1) |
