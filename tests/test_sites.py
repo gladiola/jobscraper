@@ -80,7 +80,9 @@ def test_ninjajobs_crawls_job_pages(make_fetcher):
     job = jobs[0]
     assert (job.title, job.company, job.source) == ("Senior Security Engineer", "Axios", "ninjajobs")
     assert job.url == "https://ninjajobs.org/job/abc0"
-    assert "Posted Oct 5, 2026" in job.posted_date
+    assert job.posted_date == "Posted Oct 5, 2026"
+    from jobscraper.extract import enrich
+    assert enrich(job).posted_date == "2026-10-05"
     assert "Home Jobs" not in job.description
 
 
@@ -101,6 +103,8 @@ def test_site_source_routing():
     assert bare.start_urls == ["https://example.com/", "https://example.com/careers", "https://example.com/jobs"]
     assert site_source("https://example.com/careers/openings").start_urls == ["https://example.com/careers/openings"]
     assert site_source("  ") is None
+    assert isinstance(site_source("https://notgreenhouse.io/acme"), SchemaOrgSite)
+    assert isinstance(site_source("https://evil-lever.co/acme"), SchemaOrgSite)
 
 
 def test_discover_ats_links():

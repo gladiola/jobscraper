@@ -36,7 +36,7 @@ def _cell(column: str, value: Any) -> str:
         value = _LIST_SEPARATORS.get(column, "; ").join(str(v) for v in value)
     text = _CONTROL_CHARS.sub("", "" if value is None else str(value))
     # Scraped text is untrusted: stop spreadsheet apps from evaluating it as a formula.
-    if text.startswith(_FORMULA_PREFIXES):
+    if text.lstrip(" ").startswith(_FORMULA_PREFIXES):
         text = "'" + text
     return text
 

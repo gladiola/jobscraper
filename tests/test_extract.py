@@ -126,7 +126,9 @@ def test_parse_and_normalize_dates():
         "2 weeks ago": "2026-09-24",
         "Oct 1, 2026": "2026-10-01",
         "Posted on 1st October 2026": "2026-10-01",
-        "not a date": "",
+        "Posted Oct 5, 2026 by Axios": "2026-10-05",
+        "Published: 05 October 2026 (updated)": "2026-10-05",
+        "not a date": "not a date",
         "": "",
     }
     for value, expected in cases.items():

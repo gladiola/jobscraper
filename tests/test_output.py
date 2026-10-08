@@ -10,7 +10,7 @@ from jobscraper.output import infer_format, write_jobs
 JOBS = [
     Job(title="=HYPERLINK(\"http://evil\")", url="https://jobs.example.com/1", company="Acme\x01",
         certifications=["CISSP", "OSCP"], requirements=["Degree", "3+ years"], description="Full text"),
-    Job(title="SOC Analyst", url="https://jobs.example.com/2"),
+    Job(title="SOC Analyst", url="https://jobs.example.com/2", company="  =cmd()"),
 ]
 
 
@@ -33,6 +33,7 @@ def test_csv_output(tmp_path):
     assert rows[0]["certifications"] == "CISSP; OSCP"
     assert rows[0]["requirements"] == "Degree | 3+ years"
     assert rows[1]["url"] == "https://jobs.example.com/2"
+    assert rows[1]["company"] == "'  =cmd()"
 
 
 def test_tsv_and_description(tmp_path):

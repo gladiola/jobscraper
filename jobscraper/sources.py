@@ -9,12 +9,12 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Iterator, List, Optional
-from urllib.parse import urldefrag, urljoin, urlsplit
+from urllib.parse import parse_qs, urldefrag, urljoin, urlsplit
 
 import requests
 from bs4 import BeautifulSoup
 
-from .extract import detect_education, detect_experience, html_to_text
+from .extract import detect_education, detect_experience, html_to_text, parse_date, today_utc
 from .fetch import Fetcher
 from .models import HYBRID, ONSITE, REMOTE, UNKNOWN, Job
 
@@ -284,6 +284,14 @@ class Workday(Source):
                 seen.add(path)
                 yield self._job(fetcher, summary, path)
 
+    @staticmethod
+    def _posted(info: Dict[str, Any], summary: Dict[str, Any]) -> str:
+        # ``startDate`` is when the posting went live; ignore it if it lies in the future.
+        start = parse_date(info.get("startDate"))
+        if start is not None and start <= today_utc():
+            return start.isoformat()
+        return str(info.get("postedOn") or summary.get("postedOn") or "")
+
     def _job(self, fetcher: Fetcher, summary: Dict[str, Any], path: str) -> Job:
         try:
             detail = fetcher.get_json(f"{self.api_base}{path}")
@@ -300,7 +308,7 @@ class Workday(Source):
             remote=self._remote(str(info.get("remoteType") or summary.get("remoteType") or "")),
             url=info.get("externalUrl") or f"https://{self.host}/{self.site}{path}",
             source=self.name,
-            posted_date=str(info.get("startDate") or "")[:10] or str(summary.get("postedOn") or ""),
+            posted_date=self._posted(info, summary),
             employment_type=info.get("timeType") or "",
             tags=[str(f) for f in summary.get("bulletFields") or []],
             description=html_to_text(info.get("jobDescription")),
@@ -642,7 +650,7 @@ class LinkedIn(Source):
                 if not cards:
                     break
                 for job, job_id in cards:
-                    if query.remote_only and params.get("f_WT") == "2":
+                    if params.get("f_WT") == "2":
                         job.remote = REMOTE
                     if details_ok and job_id:
                         try:
@@ -742,12 +750,12 @@ def site_source(site: str, max_pages: int = 25) -> Optional[Source]:
         raise ValueError(f"Not a valid site or URL: {site!r}")
     if host.endswith(".myworkdayjobs.com"):
         return Workday(url, max_pages=max_pages)
-    if host.endswith("greenhouse.io"):
-        query = dict(p.split("=", 1) for p in parts.query.split("&") if "=" in p)
-        board = query.get("for") or (segments[0] if segments and segments[0] != "embed" else "")
+    if host == "greenhouse.io" or host.endswith(".greenhouse.io"):
+        board = parse_qs(parts.query).get("for", [""])[0] or (
+            segments[0] if segments and segments[0] != "embed" else "")
         if board:
             return Greenhouse(board)
-    if host.endswith("lever.co") and segments and host != "api.lever.co":
+    if (host == "lever.co" or host.endswith(".lever.co")) and segments and host != "api.lever.co":
         return Lever(segments[0])
     if bare == LinkedIn.domain or bare.endswith("." + LinkedIn.domain):
         return LinkedIn()
@@ -771,8 +779,11 @@ def iter_unique(jobs: Iterable[Job]) -> Iterator[Job]:
     for job in jobs:
         url = job.url.rstrip("/").lower()
         title_key = f"{job.title.strip().lower()}|{job.company.strip().lower()}"
-        if (url and url in seen_urls) or seen_titles.get(title_key, job.source) != job.source:
+        # Title-based matching needs a company name, otherwise unrelated jobs would collide.
+        cross_source_dup = bool(job.company.strip()) and seen_titles.get(title_key, job.source) != job.source
+        if (url and url in seen_urls) or cross_source_dup:
             continue
         seen_urls.add(url)
-        seen_titles.setdefault(title_key, job.source)
+        if job.company.strip():
+            seen_titles.setdefault(title_key, job.source)
         yield job

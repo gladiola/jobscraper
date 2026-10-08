@@ -297,6 +297,9 @@ def extract_requirements(text: str, max_items: int = 15) -> List[str]:
 _ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})")
 _RELATIVE = re.compile(r"\b(\d+)\+?\s*(minute|min|hour|hr|day|week|wk|month|mo)s?\b\s*ago", re.I)
 _DATE_FORMATS = ("%b %d, %Y", "%B %d, %Y", "%d %b %Y", "%d %B %Y", "%m/%d/%Y", "%b %d %Y", "%B %d %Y", "%Y/%m/%d")
+# Dates inside longer text, e.g. "Posted Oct 5, 2026 by Acme".
+_EMBEDDED_DATE = re.compile(
+    r"\b[A-Z][a-z]{2,8} \d{1,2},? \d{4}\b|\b\d{1,2} [A-Z][a-z]{2,8},? \d{4}\b|\b\d{1,2}/\d{1,2}/\d{4}\b")
 _UNIT_DAYS = {"minute": 0, "min": 0, "hour": 0, "hr": 0, "day": 1, "week": 7, "wk": 7, "month": 30, "mo": 30}
 
 
@@ -326,18 +329,20 @@ def parse_date(value: object, today: Optional[date] = None) -> Optional[date]:
         return today - timedelta(days=int(match.group(1)) * _UNIT_DAYS[match.group(2).lower()])
     cleaned = re.sub(r"^(?:posted|published|date posted)\s*(?:on)?:?\s*", "", text, flags=re.I)
     cleaned = re.sub(r"(\d)(?:st|nd|rd|th)\b", r"\1", cleaned).replace(".", "")
-    for fmt in _DATE_FORMATS:
-        try:
-            return datetime.strptime(cleaned, fmt).date()
-        except ValueError:
-            continue
+    candidates = [cleaned] + [m.group(0) for m in _EMBEDDED_DATE.finditer(cleaned)]
+    for candidate in candidates:
+        for fmt in _DATE_FORMATS:
+            try:
+                return datetime.strptime(candidate.strip(), fmt).date()
+            except ValueError:
+                continue
     return None
 
 
 def normalize_date(value: object, today: Optional[date] = None) -> str:
-    """Return ``value`` as YYYY-MM-DD, or "" if it cannot be parsed."""
+    """Return ``value`` as YYYY-MM-DD; unparseable values are returned unchanged."""
     parsed = parse_date(value, today)
-    return parsed.isoformat() if parsed else ""
+    return parsed.isoformat() if parsed else str(value or "").strip()
 
 
 def enrich(job: Job, summary_chars: int = 300) -> Job:

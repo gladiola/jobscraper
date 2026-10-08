@@ -162,3 +162,6 @@ def test_iter_unique():
         Job(title="A", company="X", url="https://b.test/9", source="s2"),
     ]
     assert [j.url for j in iter_unique(jobs)] == ["https://a.test/1", "https://a.test/2"]
+    no_company = [Job(title="Analyst", url="https://a.test/1", source="s1"),
+                  Job(title="Analyst", url="https://b.test/2", source="s2")]
+    assert len(list(iter_unique(no_company))) == 2

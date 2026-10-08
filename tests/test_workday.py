@@ -60,6 +60,12 @@ def test_workday_fetch_paginates_and_reads_details(make_fetcher):
     assert jobs[0].remote == REMOTE
 
 
+def test_workday_future_start_date_is_not_posting_date():
+    info = {"startDate": "2999-01-01", "postedOn": "Posted 2 Days Ago"}
+    assert Workday._posted(info, {}) == "Posted 2 Days Ago"
+    assert Workday._posted({"startDate": "2026-01-02"}, {"postedOn": "Posted Today"}) == "2026-01-02"
+
+
 def test_workday_detail_failure_falls_back_to_listing(make_fetcher):
     fetcher = make_fetcher({"POST " + API + "/jobs": {"total": 1, "jobPostings": [
         {"title": "SOC Analyst", "externalPath": "/job/X/SOC_R9", "locationsText": "Denver, CO"}]}})

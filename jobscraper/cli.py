@@ -58,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sites = parser.add_argument_group("sites / domains")
     sites.add_argument("--source", action="append", default=[], metavar="NAME",
-                       help=f"built-in job board by name or domain: {', '.join(BUILTIN_SOURCES)}, or 'all' "
+                       help=f"built-in job board by name or domain: {', '.join(BUILTIN_SOURCES)}, or 'all' (includes linkedin) "
                             f"(repeatable; default: {', '.join(DEFAULT_SOURCES)} unless another site option is given)")
     sites.add_argument("--site", "--url", dest="site", action="append", default=[], metavar="DOMAIN_OR_URL",
                        help="scrape any domain or careers/job page URL you supply, e.g. example.com or "

@@ -186,7 +186,7 @@ See them with `jobscraper --list-sources`.
 | `linkedin` | linkedin.com | Public LinkedIn job search. Add with `--source linkedin`. See the note below. |
 
 If you don't pick any sites, the three default boards are searched. Pick specific ones with `--source`
-(by name or domain), or everything with `--source all`:
+(by name or domain), or every board – **including LinkedIn** – with `--source all`:
 
 ```bash
 jobscraper --field cybersecurity --source ninjajobs --source linkedin -o jobs.xlsx
@@ -249,7 +249,8 @@ it from your browser's address bar while viewing the company's job list.
 
 LinkedIn is supported through its public, logged-out job search, but:
 
-* It is **opt-in** (`--source linkedin`) and is never searched by default.
+* It is **opt-in**: it is only searched when you ask for it with `--source linkedin`, `--source all`,
+  or a linkedin.com `--site`.
 * LinkedIn's User Agreement restricts automated access – **make sure your use is allowed** before using it.
 * LinkedIn blocks rapid requests ("HTTP 429"). jobscraper stops politely when that happens and keeps
   what it already found. Use `--limit`, keep `--delay` at 1 second or more, and avoid running it repeatedly.
@@ -358,7 +359,8 @@ Run `jobscraper --help` for the full list. Summary:
   and obeys `robots.txt` when crawling websites.
 * Check each site's terms of use before scraping it, especially LinkedIn.
 * Don't lower `--delay` to 0 against real websites, and don't run searches in a tight loop.
-* Text in the output comes from other websites. Cells that start with `=`, `+`, `-` or `@` are prefixed
+* Text in the output comes from other websites. Cells that start with `=`, `+`, `-` or `@` (even after
+  spaces) are prefixed
   with `'` so spreadsheet programs won't run them as formulas.
 
 ---
