@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
 from bs4 import BeautifulSoup
@@ -33,8 +34,14 @@ def html_to_text(html: Optional[str]) -> str:
 
 def summarize(text: str, max_chars: int = 300) -> str:
     """Return a short summary built from the first sentences of ``text``."""
-    # Skip heading-like short lines ("About the role", "Who we are", ...).
-    lines = [line for line in text.splitlines() if len(line.split()) >= 4]
+    # Use the intro: skip short heading-like lines ("About the role", ...) and stop at the
+    # first requirements/benefits/... section once some text has been collected.
+    lines: List[str] = []
+    for line in text.splitlines():
+        if lines and _is_heading(line) and (_REQ_HEADING.match(line) or _OTHER_HEADING.match(line)):
+            break
+        if len(line.split()) >= 4:
+            lines.append(line)
     body = " ".join(lines) if lines else " ".join(text.split())
     if not body:
         return ""
@@ -285,9 +292,58 @@ def extract_requirements(text: str, max_items: int = 15) -> List[str]:
     return items
 
 
+# --------------------------------------------------------------------------- dates
+
+_ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})")
+_RELATIVE = re.compile(r"\b(\d+)\+?\s*(minute|min|hour|hr|day|week|wk|month|mo)s?\b\s*ago", re.I)
+_DATE_FORMATS = ("%b %d, %Y", "%B %d, %Y", "%d %b %Y", "%d %B %Y", "%m/%d/%Y", "%b %d %Y", "%B %d %Y", "%Y/%m/%d")
+_UNIT_DAYS = {"minute": 0, "min": 0, "hour": 0, "hr": 0, "day": 1, "week": 7, "wk": 7, "month": 30, "mo": 30}
+
+
+def today_utc() -> date:
+    return datetime.now(timezone.utc).date()
+
+
+def parse_date(value: object, today: Optional[date] = None) -> Optional[date]:
+    """Parse ISO dates, "Oct 1, 2026", "Posted 3 Days Ago", "yesterday", "30+ days ago", ..."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = _ISO_DATE.search(text)
+    if match:
+        try:
+            return date(*map(int, match.groups()))
+        except ValueError:
+            return None
+    today = today or today_utc()
+    lowered = text.lower()
+    if re.search(r"\b(?:today|just (?:now|posted))\b", lowered):
+        return today
+    if "yesterday" in lowered:
+        return today - timedelta(days=1)
+    match = _RELATIVE.search(lowered)
+    if match:
+        return today - timedelta(days=int(match.group(1)) * _UNIT_DAYS[match.group(2).lower()])
+    cleaned = re.sub(r"^(?:posted|published|date posted)\s*(?:on)?:?\s*", "", text, flags=re.I)
+    cleaned = re.sub(r"(\d)(?:st|nd|rd|th)\b", r"\1", cleaned).replace(".", "")
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(cleaned, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def normalize_date(value: object, today: Optional[date] = None) -> str:
+    """Return ``value`` as YYYY-MM-DD, or "" if it cannot be parsed."""
+    parsed = parse_date(value, today)
+    return parsed.isoformat() if parsed else ""
+
+
 def enrich(job: Job, summary_chars: int = 300) -> Job:
     """Fill in derived fields (summary, requirements, ...) from ``job.description``."""
     text = job.description or ""
+    job.posted_date = normalize_date(job.posted_date)
     if not job.summary:
         job.summary = summarize(text, summary_chars)
     if not job.education:

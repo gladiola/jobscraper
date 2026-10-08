@@ -58,7 +58,9 @@ def write_jobs(jobs: Sequence[Job], path: str, fmt: Optional[str] = None, includ
         _write_xlsx(jobs, path, columns)
         return fmt
 
-    stream = sys.stdout if path == "-" else open(path, "w", newline="", encoding="utf-8")
+    # utf-8-sig adds a byte-order mark so Excel detects UTF-8 in CSV/TSV files.
+    encoding = "utf-8" if fmt == "json" else "utf-8-sig"
+    stream = sys.stdout if path == "-" else open(path, "w", newline="", encoding=encoding)
     try:
         if fmt == "json":
             records = []

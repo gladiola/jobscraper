@@ -26,6 +26,10 @@ class SearchQuery:
     """Hints passed to sources that support server-side searching."""
 
     keywords: List[str] = field(default_factory=list)
+    locations: List[str] = field(default_factory=list)
+    remote_only: bool = False
+    include_hybrid: bool = False
+    posted_within_days: Optional[int] = None
 
 
 class Source:
@@ -435,26 +439,114 @@ def discover_job_links(page_html: str, page_url: str, limit: int = 50) -> List[s
     return links
 
 
-class SchemaOrgSite(Source):
-    """Scrape any website that publishes schema.org ``JobPosting`` data (most career sites/ATSs do).
+def parse_html_job(page_html: str, page_url: str, source: str = "") -> Optional[Job]:
+    """Best-effort extraction of a single job from a page without schema.org data.
 
-    Each start URL may be an individual job page or a listing page; for listing pages
-    without embedded postings, links that look like job pages on the same site are
-    followed (up to ``max_pages``). robots.txt is always honoured.
+    Uses ``og:title``/``<h1>``/``<title>`` for the title and the main content block for the
+    description. Returns None if the page does not look like a job posting.
+    """
+    soup = BeautifulSoup(page_html, "html.parser")
+
+    def meta(*names: str) -> str:
+        for name in names:
+            tag = soup.find("meta", attrs={"property": name}) or soup.find("meta", attrs={"name": name})
+            if tag and tag.get("content"):
+                return tag["content"].strip()
+        return ""
+
+    site_name = meta("og:site_name")
+    host = (urlsplit(page_url).hostname or "").lower()
+    host_label = (host[4:] if host.startswith("www.") else host).split(".")[0]
+    h1 = soup.find("h1")
+    h1_text = h1.get_text(" ", strip=True) if h1 else ""
+    page_title = soup.title.get_text(" ", strip=True) if soup.title else ""
+    # Prefer <title> when it is the <h1> plus extra detail such as the company name.
+    title = meta("og:title") or (page_title if h1_text and h1_text in page_title else h1_text or page_title)
+    # Drop a trailing " - Site Name" / " | Site Name".
+    parts = re.split(r"\s+[|–—-]\s+", title)
+    if len(parts) > 1 and parts[-1].strip().lower().replace(" ", "") in {site_name.lower().replace(" ", ""), host_label}:
+        title = " - ".join(parts[:-1])
+    company = ""
+    if " : " in title:  # "Security Engineer : Acme" (NinjaJobs and others)
+        title, company = (p.strip() for p in title.split(" : ", 1))
+    elif re.search(r"\s+at\s+", title):
+        title, company = (p.strip() for p in re.split(r"\s+at\s+", title, maxsplit=1))
+
+    for tag in soup(["script", "style", "nav", "header", "footer", "form", "noscript"]):
+        tag.decompose()
+    container = (
+        soup.find(attrs={"class": re.compile(r"(?:job|posting)[-_]?(?:description|details|body|content)", re.I)})
+        or soup.find(attrs={"id": re.compile(r"(?:job|posting)[-_]?(?:description|details|body|content)", re.I)})
+        or soup.find("article") or soup.find("main") or soup.body or soup
+    )
+    description = html_to_text(str(container))
+    if not title or len(description) < 100:
+        return None
+
+    time_tag = soup.find("time")
+    posted = meta("article:published_time", "datePosted", "date") or (
+        (time_tag.get("datetime") or time_tag.get_text(" ", strip=True)) if time_tag else "")
+    if not posted:
+        match = re.search(r"\b(?:posted|published)\b[^\n]{0,40}", description, re.I)
+        posted = match.group(0) if match else ""
+    return Job(
+        title=html.unescape(title),
+        company=html.unescape(company or site_name),
+        url=urldefrag(page_url)[0],
+        source=source or host,
+        posted_date=posted,
+        description=description,
+    )
+
+
+# Links to applicant tracking systems that we have dedicated sources for.
+_ATS_HOSTS = re.compile(r"(?:^|\.)(?:myworkdayjobs\.com|greenhouse\.io|lever\.co)$", re.I)
+
+
+def discover_ats_links(page_html: str, page_url: str) -> List[str]:
+    """Return Workday/Greenhouse/Lever board URLs linked or embedded on a careers page."""
+    found: Dict[str, str] = {}
+    soup = BeautifulSoup(page_html, "html.parser")
+    for tag in soup.find_all(["a", "iframe", "script"]):
+        ref = tag.get("href") or tag.get("src")
+        if not ref:
+            continue
+        url = urljoin(page_url, ref)
+        parts = urlsplit(url)
+        if parts.scheme not in ("http", "https") or not _ATS_HOSTS.search(parts.hostname or ""):
+            continue
+        board = site_source(url)
+        if board is not None and not isinstance(board, SchemaOrgSite):
+            found.setdefault(board.name, url)
+    return list(found.values())
+
+
+class SchemaOrgSite(Source):
+    """Scrape any website/domain: schema.org ``JobPosting`` data, embedded ATS boards, or plain HTML job pages.
+
+    Each start URL may be an individual job page or a listing page. Listing pages are
+    expanded by following links that look like job pages on the same site; job boards
+    hosted on Workday, Greenhouse or Lever that the site links to are scraped through
+    their APIs. robots.txt is always honoured.
     """
 
-    def __init__(self, url: str, max_pages: int = 25) -> None:
+    max_depth = 2
+    listing_threshold = 3  # a page with this many job links is a listing, not a posting
+
+    def __init__(self, url: str, max_pages: int = 25, start_urls: Optional[List[str]] = None) -> None:
         self.url = url
+        self.start_urls = start_urls or [url]
         self.max_pages = max_pages
         self.domain = urlsplit(url).hostname or ""
         self.name = self.domain
 
     def fetch(self, fetcher: Fetcher, query: SearchQuery) -> Iterator[Job]:
-        queue = [self.url]
+        queue = [(u, 0) for u in self.start_urls]
         seen = set()
+        boards_done = set()
         pages = 0
         while queue and pages < self.max_pages:
-            url = queue.pop(0)
+            url, depth = queue.pop(0)
             if url in seen:
                 continue
             seen.add(url)
@@ -464,20 +556,160 @@ class SchemaOrgSite(Source):
             try:
                 response = fetcher.get(url)
             except requests.RequestException as exc:
-                log.warning("Failed to fetch %s: %s", url, exc)
+                (log.info if url in self.start_urls[1:] else log.warning)("Failed to fetch %s: %s", url, exc)
                 continue
             pages += 1
             if "html" not in response.headers.get("Content-Type", "text/html"):
                 continue
-            postings = parse_job_postings(response.text, url, self.name)
-            yield from postings
-            if not postings and url == self.url:
-                queue.extend(discover_job_links(response.text, url))
+            page = response.text
+            postings = parse_job_postings(page, url, self.name)
+            if postings:
+                yield from postings
+                continue
+            if depth == 0:
+                for board_url in discover_ats_links(page, url):
+                    board = site_source(board_url, self.max_pages)
+                    if board is not None and board.name not in boards_done:
+                        boards_done.add(board.name)
+                        log.info("%s links to %s", url, board.name)
+                        yield from board.fetch(fetcher, query)
+            links = [link for link in discover_job_links(page, url) if link not in seen]
+            if len(links) >= self.listing_threshold or (depth == 0 and links):
+                if depth < self.max_depth:
+                    queue.extend((link, depth + 1) for link in links)
+            elif depth > 0 or not boards_done:
+                job = parse_html_job(page, url, self.name)
+                if job:
+                    yield job
+
+
+class NinjaJobs(SchemaOrgSite):
+    """https://ninjajobs.org - vetted cybersecurity jobs (crawled; robots.txt honoured)."""
+
+    name = "ninjajobs"
+    domain = "ninjajobs.org"
+
+    def __init__(self, max_pages: int = 25) -> None:
+        super().__init__("https://ninjajobs.org/jobs", max_pages=max_pages,
+                         start_urls=["https://ninjajobs.org/jobs", "https://ninjajobs.org/"])
+        self.name = "ninjajobs"
+
+
+class LinkedIn(Source):
+    """https://www.linkedin.com/jobs - public (logged-out) job search; opt-in, heavily rate limited.
+
+    Uses LinkedIn's guest job-search pages. LinkedIn's User Agreement restricts automated
+    access - make sure your use is permitted, keep request volumes low and use --limit.
+    """
+
+    name = "linkedin"
+    domain = "linkedin.com"
+    search_url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+    detail_url = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{id}"
+    max_pages = 10
+    fetch_details = True
+
+    @staticmethod
+    def _keywords(terms: List[str]) -> str:
+        if len(terms) == 1:
+            return terms[0]
+        return " OR ".join(f'"{t}"' for t in terms)
+
+    def _params(self, query: SearchQuery, location: Optional[str]) -> Dict[str, Any]:
+        params: Dict[str, Any] = {}
+        if query.keywords:
+            params["keywords"] = self._keywords(query.keywords)
+        if location:
+            params["location"] = location
+        if query.remote_only:
+            params["f_WT"] = "2,3" if query.include_hybrid else "2"
+        if query.posted_within_days is not None:
+            params["f_TPR"] = f"r{max(1, query.posted_within_days) * 86400}"
+        return params
+
+    def fetch(self, fetcher: Fetcher, query: SearchQuery) -> Iterator[Job]:
+        details_ok = self.fetch_details
+        for location in query.locations or [None]:
+            params = self._params(query, location)
+            start = 0
+            for _ in range(self.max_pages):
+                try:
+                    page = fetcher.get(self.search_url, params={**params, "start": start}).text
+                except requests.HTTPError as exc:
+                    log.warning("LinkedIn search stopped (%s); LinkedIn rate-limits guest searches", exc)
+                    return
+                cards = parse_linkedin_cards(page)
+                if not cards:
+                    break
+                for job, job_id in cards:
+                    if query.remote_only and params.get("f_WT") == "2":
+                        job.remote = REMOTE
+                    if details_ok and job_id:
+                        try:
+                            apply_linkedin_detail(job, fetcher.get(self.detail_url.format(id=job_id)).text)
+                        except requests.HTTPError as exc:
+                            log.warning("LinkedIn job details unavailable (%s); continuing with search cards only",
+                                        exc)
+                            details_ok = False
+                    yield job
+                start += len(cards)
+
+
+def _text_of(node: Any) -> str:
+    return node.get_text(" ", strip=True) if node is not None else ""
+
+
+def parse_linkedin_cards(page_html: str) -> List[Any]:
+    """Parse LinkedIn guest search results into ``(Job, job_id)`` pairs."""
+    soup = BeautifulSoup(page_html, "html.parser")
+    cards = soup.select("[data-entity-urn*='jobPosting']") or soup.select(".base-card")
+    results = []
+    for card in cards:
+        link = card.select_one("a.base-card__full-link") or card.select_one("a[href*='/jobs/view/']") or (
+            card if card.name == "a" else None)
+        href = link.get("href", "") if link is not None else ""
+        urn = card.get("data-entity-urn", "")
+        match = re.search(r"jobPosting:(\d+)", urn) or re.search(r"(?:-|/view/)(\d{6,})(?:[/?]|$)", href)
+        job_id = match.group(1) if match else ""
+        url = f"https://www.linkedin.com/jobs/view/{job_id}/" if job_id else href.split("?")[0]
+        title = _text_of(card.select_one(".base-search-card__title"))
+        if not title or not url:
+            continue
+        time_tag = card.select_one("time")
+        results.append((Job(
+            title=title,
+            company=_text_of(card.select_one(".base-search-card__subtitle")),
+            location=_text_of(card.select_one(".job-search-card__location")),
+            url=url,
+            source="linkedin",
+            posted_date=(time_tag.get("datetime") or _text_of(time_tag)) if time_tag is not None else "",
+            salary=_text_of(card.select_one(".job-search-card__salary-info")),
+        ), job_id))
+    return results
+
+
+def apply_linkedin_detail(job: Job, page_html: str) -> Job:
+    """Add the description and job criteria from a LinkedIn guest job page to ``job``."""
+    soup = BeautifulSoup(page_html, "html.parser")
+    markup = soup.select_one(".show-more-less-html__markup") or soup.select_one(".description__text")
+    if markup is not None:
+        job.description = html_to_text(markup.decode_contents())
+    for item in soup.select(".description__job-criteria-item"):
+        header = _text_of(item.select_one(".description__job-criteria-subheader")).lower()
+        value = _text_of(item.select_one(".description__job-criteria-text"))
+        if not value:
+            continue
+        if "employment type" in header:
+            job.employment_type = value
+        elif value not in job.tags:
+            job.tags.append(value)
+    return job
 
 
 # --------------------------------------------------------------------------- registry
 
-BUILTIN_SOURCES = {cls.name: cls for cls in (RemoteOK, Remotive, Arbeitnow)}
+BUILTIN_SOURCES = {cls.name: cls for cls in (RemoteOK, Remotive, Arbeitnow, NinjaJobs, LinkedIn)}
+DEFAULT_SOURCES = ("remoteok", "remotive", "arbeitnow")
 
 
 def builtin_source(name_or_domain: str) -> Source:
@@ -490,6 +722,46 @@ def builtin_source(name_or_domain: str) -> Source:
         if key in (cls.name, cls.domain):
             return cls()
     raise KeyError(f"Unknown source {name_or_domain!r}; choose from: {', '.join(BUILTIN_SOURCES)}")
+
+
+def site_source(site: str, max_pages: int = 25) -> Optional[Source]:
+    """Pick the right source for an operator-supplied domain or URL.
+
+    Workday, Greenhouse, Lever, LinkedIn, NinjaJobs and the built-in boards are recognised
+    by host name; anything else is crawled with :class:`SchemaOrgSite`.
+    """
+    site = site.strip()
+    if not site:
+        return None
+    url = site if "://" in site else f"https://{site}"
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    bare = host[4:] if host.startswith("www.") else host
+    segments = [s for s in parts.path.split("/") if s]
+    if parts.scheme not in ("http", "https") or not host:
+        raise ValueError(f"Not a valid site or URL: {site!r}")
+    if host.endswith(".myworkdayjobs.com"):
+        return Workday(url, max_pages=max_pages)
+    if host.endswith("greenhouse.io"):
+        query = dict(p.split("=", 1) for p in parts.query.split("&") if "=" in p)
+        board = query.get("for") or (segments[0] if segments and segments[0] != "embed" else "")
+        if board:
+            return Greenhouse(board)
+    if host.endswith("lever.co") and segments and host != "api.lever.co":
+        return Lever(segments[0])
+    if bare == LinkedIn.domain or bare.endswith("." + LinkedIn.domain):
+        return LinkedIn()
+    if bare == NinjaJobs.domain:
+        return NinjaJobs(max_pages=max_pages)
+    for cls in (RemoteOK, Remotive, Arbeitnow):
+        if bare == cls.domain:
+            return cls()
+    if not segments:
+        # A bare domain: try the usual careers pages.
+        root = f"{parts.scheme}://{parts.netloc}"
+        return SchemaOrgSite(root + "/", max_pages=max_pages,
+                             start_urls=[root + "/", root + "/careers", root + "/jobs"])
+    return SchemaOrgSite(url, max_pages=max_pages)
 
 
 def iter_unique(jobs: Iterable[Job]) -> Iterator[Job]:

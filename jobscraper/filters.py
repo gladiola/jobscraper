@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import re
+from datetime import date, timedelta
 from typing import Dict, Iterable, List, Optional, Sequence
 from urllib.parse import urlsplit
 
+from .extract import parse_date, today_utc
 from .models import HYBRID, REMOTE, Job
 
 # Search terms used for ``--field``; each field expands to several common phrasings.
 FIELDS: Dict[str, List[str]] = {
     "cybersecurity": [
-        "cybersecurity", "cyber security", "information security", "infosec", "security engineer",
-        "security analyst", "security architect", "SOC analyst", "security operations", "penetration tester",
+        "cybersecurity", "cyber security", "cyber", "information security", "infosec", "security engineer",
+        "security analyst", "security architect", "SOC", "SOC analyst", "security operations", "penetration tester",
         "penetration testing", "pentest", "application security", "appsec", "network security", "cloud security",
         "incident response", "threat intelligence", "vulnerability management", "GRC", "DevSecOps",
     ],
@@ -79,6 +81,9 @@ class JobFilter:
         domains: Sequence[str] = (),
         exclude_domains: Sequence[str] = (),
         title_only: bool = False,
+        posted_within_days: Optional[int] = None,
+        include_undated: bool = False,
+        today: Optional[date] = None,
     ) -> None:
         self.keywords = [keyword_pattern(k) for k in keywords if k.strip()]
         self.require = [keyword_pattern(k) for k in require if k.strip()]
@@ -89,6 +94,10 @@ class JobFilter:
         self.domains = list(domains)
         self.exclude_domains = list(exclude_domains)
         self.title_only = title_only
+        self.include_undated = include_undated
+        self.cutoff: Optional[date] = None
+        if posted_within_days is not None:
+            self.cutoff = (today or today_utc()) - timedelta(days=posted_within_days)
 
     def _search_text(self, job: Job) -> str:
         if self.title_only:
@@ -99,6 +108,13 @@ class JobFilter:
         if self.remote_only:
             allowed = {REMOTE, HYBRID} if self.include_hybrid else {REMOTE}
             if job.remote not in allowed:
+                return False
+        if self.cutoff is not None:
+            posted = parse_date(job.posted_date)
+            if posted is None:
+                if not self.include_undated:
+                    return False
+            elif posted < self.cutoff:
                 return False
         if self.locations and not any(loc in job.location.lower() for loc in self.locations):
             return False

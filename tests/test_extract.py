@@ -111,3 +111,23 @@ def test_enrich_fills_fields():
     assert job.clearance == ["Secret"]
     assert len(job.requirements) == 4
     assert job.summary.startswith("We are hiring")
+
+
+def test_parse_and_normalize_dates():
+    from datetime import date
+    from jobscraper.extract import normalize_date
+    today = date(2026, 10, 8)
+    cases = {
+        "2026-10-01T12:00:00Z": "2026-10-01",
+        "Posted 3 Days Ago": "2026-10-05",
+        "Posted Today": "2026-10-08",
+        "Posted Yesterday": "2026-10-07",
+        "Posted 30+ Days Ago": "2026-09-08",
+        "2 weeks ago": "2026-09-24",
+        "Oct 1, 2026": "2026-10-01",
+        "Posted on 1st October 2026": "2026-10-01",
+        "not a date": "",
+        "": "",
+    }
+    for value, expected in cases.items():
+        assert normalize_date(value, today) == expected, value
