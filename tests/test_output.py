@@ -36,6 +36,18 @@ def test_csv_output(tmp_path):
     assert rows[1]["company"] == "'  =cmd()"
 
 
+@pytest.mark.parametrize(("suffix", "delimiter"), [(".csv", ","), (".tsv", "\t")])
+def test_tabular_append(tmp_path, suffix, delimiter):
+    path = tmp_path / f"jobs{suffix}"
+    write_jobs(JOBS[:1], str(path))
+    write_jobs(JOBS[1:], str(path), append=True)
+    with path.open(encoding="utf-8-sig", newline="") as output:
+        rows = list(csv.DictReader(output, delimiter=delimiter))
+    assert len(rows) == 2
+    assert rows[1]["title"] == "SOC Analyst"
+    assert path.read_bytes().count(b"title") == 1
+
+
 def test_tsv_and_description(tmp_path):
     path = tmp_path / "jobs.tsv"
     write_jobs(JOBS, str(path), include_description=True)
@@ -51,6 +63,14 @@ def test_json_output(tmp_path):
     assert "description" not in data[0]
 
 
+def test_json_append(tmp_path):
+    path = tmp_path / "jobs.json"
+    write_jobs(JOBS[:1], str(path))
+    write_jobs(JOBS[1:], str(path), append=True)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert [job["title"] for job in data] == [job.title for job in JOBS]
+
+
 def test_xlsx_output(tmp_path):
     path = tmp_path / "jobs.xlsx"
     write_jobs(JOBS, str(path))
@@ -62,3 +82,11 @@ def test_xlsx_output(tmp_path):
     assert url.hyperlink.target == "https://jobs.example.com/1"
     with pytest.raises(ValueError):
         write_jobs(JOBS, "-", "xlsx")
+
+
+def test_xlsx_append(tmp_path):
+    path = tmp_path / "jobs.xlsx"
+    write_jobs(JOBS[:1], str(path))
+    write_jobs(JOBS[1:], str(path), append=True)
+    sheet = load_workbook(path).active
+    assert [sheet.cell(row=row, column=1).value for row in range(2, 4)] == [job.title for job in JOBS]

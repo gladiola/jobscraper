@@ -85,6 +85,8 @@ def build_parser() -> argparse.ArgumentParser:
                      help="output file, '-' for stdout (default: %(default)s)")
     out.add_argument("-f", "--format", choices=FORMATS,
                      help="output format (default: from the file extension, else csv)")
+    out.add_argument("--append", action="store_true",
+                     help="append results to the existing output file instead of replacing it")
     out.add_argument("--include-description", action="store_true", help="add the full description column")
     out.add_argument("--limit", type=int, help="stop after this many matching jobs")
 
@@ -203,7 +205,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     jobs = scrape(sources, fetcher, job_filter, query, args.limit)
 
     try:
-        fmt = write_jobs(jobs, args.output, args.format, args.include_description)
+        fmt = write_jobs(jobs, args.output, args.format, args.include_description, args.append)
     except (OSError, ValueError) as exc:
         log.error("Could not write output: %s", exc)
         return 1

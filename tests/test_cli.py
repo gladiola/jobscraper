@@ -79,6 +79,14 @@ def test_cli_end_to_end(fake_network, tmp_path, capsys):
     assert "Wrote 2 job(s)" in capsys.readouterr().err
 
 
+def test_cli_append(fake_network, tmp_path):
+    out = tmp_path / "jobs.csv"
+    args = ["--field", "cybersecurity", "-o", str(out)]
+    assert cli.main(args) == 0
+    assert cli.main(args + ["--append"]) == 0
+    assert len(list(csv.DictReader(out.open(encoding="utf-8-sig")))) == 4
+
+
 def test_cli_posted_within(fake_network, tmp_path):
     out = tmp_path / "jobs.csv"
     assert cli.main(["--field", "cybersecurity", "--posted-within", "5", "-o", str(out)]) == 0
